@@ -10,6 +10,8 @@ const app = express()
 /**
  * Primary app routes.
  */
-app.get('/', radioController.ping)
+app.get('/', (req, res) => {
+    res.status(200).send('We have a signal!')
+})
 
 export default app
