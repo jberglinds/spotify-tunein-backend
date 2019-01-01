@@ -18,7 +18,8 @@
     "tslint": "tslint -c tslint.json -p tsconfig.json",
     "tslint-fix": "yarn run tslint -- --fix",
     "test": "jest --forceExit --coverage --verbose",
-    "watch-test": "yarn run test -- --watchAll"
+    "watch-test": "yarn run test -- --watchAll",
+    "postinstall": "yarn run build-ts"
   },
   "dependencies": {
     "dotenv": "^6.2.0",
