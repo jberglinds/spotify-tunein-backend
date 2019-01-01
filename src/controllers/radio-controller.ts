@@ -1,15 +1,9 @@
 import { Subject, Observable } from 'rxjs'
 
 export enum EventType {
-    BroadcastCreated = 'broadcast-created',
-    BroadcastChanged = 'broadcast-changed',
+    BroadcastChanged = 'player-state-updated',
     BroadcastEnded = 'broadcast-ended',
-    BroadcastCreationError = 'broadcast-creation-error',
-    BroadcastJoinError = 'broadcast-join-error',
-    BroadcastDestroyed = 'broadcast-destroyed',
-    DidJoinBroadcast = 'did-join-broadcast',
-    DidLeaveBroadcast = 'did-leave-broadcast',
-    DidChangeBroadcast = 'did-change-broadcast'
+    BroadcastListenerCountChanged = 'listener',
 }
 
 export class Event {
@@ -27,13 +21,44 @@ type Client = {
     handler: Subject<Event>
 }
 
+export type Coordinate = {
+    lat: number,
+    lng: number
+}
+
+export type APIRadioStation = {
+    name: string,
+    coordinate?: Coordinate
+}
+
 type RadioStation = {
     name: string,
     ownerId: string,
-    listeners: string[]
+    listeners: string[],
+    coordinate?: Coordinate,
+    playerState?: PlayerState
 }
 
+export type PlayerState = {
+    timestamp: number,
+    isPaused: boolean,
+    trackURI: string,
+    playbackPosition: number
+}
+
+class ClientError extends Error {}
+
 class RadioController {
+    // Singleton
+    private static sharedInstance: RadioController;
+    static shared() {
+        if (!RadioController.sharedInstance) {
+            RadioController.sharedInstance = new RadioController()
+        }
+        return RadioController.sharedInstance
+    }
+    public constructor() {}
+
     private clients: Client[] = []
     private radioStations: RadioStation[] = []
 
@@ -102,18 +127,19 @@ class RadioController {
      * Starts a broadcast for the client with the given id.
      * Stops any previous broadcast or leaves any stations that it listens to.
      */
-    startBroadcasting(id: string, stationName: string) {
+    startBroadcasting(id: string, station: APIRadioStation): Error | undefined {
         const activeStation = this.getBroadcastStationForClient(id)
         // Already broadcasting to that station, do nothing
-        if (activeStation && activeStation.name === stationName) return
-        if (!stationName) return
+        if (activeStation && activeStation.name === station.name) return
+        if (!station.name || station.name === "") {
+            return new ClientError("The station name cannot be blank")
+        }
 
         // Return error if someone else is broadcasting to that channel
-        if (this.radioStations.some(station =>
-            station.name === stationName && station.ownerId !== id
+        if (this.radioStations.some(s =>
+            s.name === station.name && s.ownerId !== id
         )) {
-            this.notifyClient(id, new Event(EventType.BroadcastCreationError))
-            return
+            return new ClientError("Someone else is broadcasting to that channel")
         }
 
         this.leaveBroadcast(id)
@@ -123,13 +149,13 @@ class RadioController {
         this.radioStations = [
             ...this.radioStations,
             {
-                name: stationName,
+                name: station.name,
                 ownerId: id,
-                listeners: []
+                listeners: [],
+                coordinate: station.coordinate
             }
         ]
-        this.notifyClient(id, new Event(EventType.BroadcastCreated))
-        console.log(`Broadcast started: ${stationName}`)
+        console.log(`Broadcast started: ${station.name}`)
     }
 
     /**
@@ -145,8 +171,6 @@ class RadioController {
 
         // Remove the station
         this.radioStations = this.radioStations.filter(s => s.name != station.name)
-
-        this.notifyClient(id, new Event(EventType.BroadcastDestroyed))
         console.log(`Broadcast ended: ${station.name}`)
     }
 
@@ -155,22 +179,32 @@ class RadioController {
      * name. Stops broadcasting if doing that. If tuned in to other station,
      * stops listening to that.
      */
-    joinBroadcast(id: string, stationName: string) {
+    joinBroadcast(id: string, stationName: string): PlayerState | Error {
+        // Already listening, do nothing
+        const listeningStation = this.getListenerStationForClient(id)
+        if (listeningStation && listeningStation.name === stationName) {
+            return listeningStation.playerState || new ClientError("Broadcast hasn't started yet")
+        }
+
+        // Return error if broadcast doesn't exist
+        const station = this.radioStations.find(station => {
+            return station.name === stationName
+        })
+        if (!station) {
+            return new ClientError("Broadcast doesn't exist")
+        }
+        if (station.ownerId === id) {
+            return new ClientError("You can't join your own station")
+        }
+        if (!station.playerState) {
+            return new ClientError("Broadcast hasn't started yet")
+        }
+
         // Stop broadcasting to previous station if any
         this.stopBroadcasting(id)
 
-        // Already listening, do nothing
-        const listeningStation = this.getListenerStationForClient(id)
-        if (listeningStation && listeningStation.name === stationName) return
-
         // Leave any current broadcast
         this.leaveBroadcast(id)
-
-        // Return error if broadcast doesn't exist
-        if (!this.radioStations.some(station => station.name === stationName)) {
-            this.notifyClient(id, new Event(EventType.BroadcastJoinError))
-            return
-        }
 
         // Add as listener to correct station
         this.radioStations = this.radioStations.reduce((acc: RadioStation[], station) => {
@@ -186,26 +220,39 @@ class RadioController {
             }
         }, [])
 
-        this.notifyClient(id, new Event(EventType.DidJoinBroadcast))
         console.log(`Client ${id} joined broadcast: ${stationName}`)
+        return station.playerState
     }
 
     /**
      * Updates the player state for the broadcast that the client with the
      * given id is currently running.
      */
-    updatePlayerState(id: string, newState: any) {
+    updatePlayerState(id: string, newState: PlayerState): Error | undefined {
         const station = this.getBroadcastStationForClient(id)
         // Not broadcasting, do nothing
-        if (!station) return
+        if (!station) return new ClientError('No ongoing broadcast')
 
         // TODO: Do validation of what we pass along
         if (!newState) {
-            return
+            return new ClientError('Invalid payload')
         }
 
+        // Update player state of station
+        this.radioStations = this.radioStations.reduce((acc: RadioStation[], s) => {
+            if (s.name === station.name) {
+                // Update player state
+                return [...acc, {
+                    ...s,
+                    playerState: newState
+                }]
+            } else {
+                // Thread through
+                return [...acc, s]
+            }
+        }, [])
+
         // Pass the new state along to all listeners
-        this.notifyClient(id, new Event(EventType.DidChangeBroadcast))
         this.notifyStation(station.name, new Event(EventType.BroadcastChanged, newState))
     }
 
@@ -215,6 +262,7 @@ class RadioController {
      */
     leaveBroadcast(id: string) {
         const listeningStation = this.getListenerStationForClient(id)
+        // If not listening, do nothing
         if (!listeningStation) return
 
         // Remove as listener from all stations
@@ -227,9 +275,11 @@ class RadioController {
                 }
             ]
         }, [])
-
-        this.notifyClient(id, new Event(EventType.DidLeaveBroadcast))
         console.log(`Client ${id} left broadcast: ${listeningStation.name}`)
+    }
+
+    getStations() {
+        return this.radioStations
     }
 }
 
