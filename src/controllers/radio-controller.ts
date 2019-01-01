@@ -50,7 +50,7 @@ class ClientError extends Error {}
 
 class RadioController {
     // Singleton
-    private static sharedInstance: RadioController;
+    private static sharedInstance: RadioController
     static shared() {
         if (!RadioController.sharedInstance) {
             RadioController.sharedInstance = new RadioController()
@@ -131,15 +131,15 @@ class RadioController {
         const activeStation = this.getBroadcastStationForClient(id)
         // Already broadcasting to that station, do nothing
         if (activeStation && activeStation.name === station.name) return
-        if (!station.name || station.name === "") {
-            return new ClientError("The station name cannot be blank")
+        if (!station.name || station.name === '') {
+            return new ClientError('The station name cannot be blank')
         }
 
         // Return error if someone else is broadcasting to that channel
         if (this.radioStations.some(s =>
             s.name === station.name && s.ownerId !== id
         )) {
-            return new ClientError("Someone else is broadcasting to that channel")
+            return new ClientError('Someone else is broadcasting to that channel')
         }
 
         this.leaveBroadcast(id)
