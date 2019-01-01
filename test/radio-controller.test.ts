@@ -10,27 +10,16 @@ import { map, bufferTime } from 'rxjs/operators';
 console.log = jest.fn()
 
 let radioController: RadioController
-
-beforeEach(() => {
-    radioController = new RadioController()
-})
-
-function checkStream<T>(observable: Observable<T>, values: T[], done: () => void) {
-    const subscription = observable
-        .pipe(bufferTime(0))
-        .subscribe(result => {
-            expect(result).toEqual(values)
-            subscription.unsubscribe()
-            done()
-    })
-}
-
 let examplePlayerState: PlayerState = {
     timestamp: 0,
     isPaused: false,
     trackURI: 'lol',
     playbackPosition: 0
 }
+
+beforeEach(() => {
+    radioController = new RadioController()
+})
 
 describe('creating broadcast', () => {
     test('happy path', () => {
